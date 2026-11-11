@@ -1,10 +1,14 @@
-# esiCancer
+# esiCancer - Version with dynamic event rate
 Darlan Conterno Minussi, 
 Bernardo Henz,
 Mariana dos Santos Oliveira,
 Eduardo C. Filippi-Chiela,
 Manuel M. Oliveira,
 Guido Lenz
+
+> This version was used for some simulations on "**The relation between cance median age of detection and incidence is differently impacted by mutation rate**", *Kraemer-Mattos and Oliveira et al. (currently in review).
+
+> To tune the dynamic mutation, before building the project edit the function "mutation_rate" on cellsystem.cpp
 
 ### What is esiCancer?
 
