@@ -6,6 +6,7 @@
 #include <QDebug>
 #include "mutationmanual.h"
 #include <QFileInfo>
+#include <cmath>
 
 bool fileExists(QString path) {
     QFileInfo check_file(path);
@@ -85,6 +86,9 @@ CellSystem::CellSystem()
     maxMutationsPerDivision = 2000;
     maxProliferation = maxDeath = 1;
     stdGrowthRate = -1;
+    asymmetricMitosisProb = 0;
+    asymmetricMitosisDivFactor = 0.5;
+    asymmetricMitosisDeathFactor = 0.5;
 }
 
 
@@ -110,6 +114,8 @@ void CellSystem::reset()
 
     //log containers
     totalNumberOfEvents=0;
+    gensNumberOfEvents.clear();
+    gensNumberOfEvents.push_back(0);
     populationHistory.clear();
 
 
@@ -212,8 +218,16 @@ void CellSystem::addMutationEventToNewCell(int tmpMutationEventId,int tmpMutatio
     }
 }
 
+float mutation_rate(int gen){
+    float mut = 1;
 
-Cell *CellSystem::addNewCell(Cell *father){
+    int increment = 1;
+
+    return mut + increment * (gen / (522));
+}
+
+//mitosisFirstCell only used in the case of asymmetric mitosis
+Cell *CellSystem::addNewCell(Cell *father, bool hapenningAsymmetricMitosis, bool mitosisFirstCell){
     unsigned int tmpMutatedPosition;
     int tmpMutationEventId,tmpMutationGeneId;
     //copy from father
@@ -228,16 +242,17 @@ Cell *CellSystem::addNewCell(Cell *father){
     float proliferationChild = father->getProbReproduction();
     float deathChild = father->getProbDeath();
     float telomeresChild = father->getTelomeres();
-    float tmpMutationsPerRepChild = father->getMutationsPerRep();
-    float tmpMutationsPerRepFather = father->getMutationsPerRep();
+    float tmpMutationsPerRepChild = /*father->getMutationsPerRep() */ mutation_rate(getGeneration());
+    float tmpMutationsPerRepFather = /*father->getMutationsPerRep() */ mutation_rate(getGeneration());
     float tmpMicroEnvironment = 1;
-//    if (generation>520){
-//        qDebug()<<"Adding New Cell:  mutPerRep: "<<tmpMutationsPerRepFather<<"    mutations: "<<newMutations.size()<<"    Muts:";
-//        for (int i=0;i<newMutations.size();i++)
-//            qDebug()<<"   Mut "<<newMutations[i];
-//    }
+    if (generation>520){
+        qDebug()<<"Adding New Cell:  mutPerRep: "<<tmpMutationsPerRepFather<<"    mutations: "<<newMutations.size()<<"    Muts:";
+        for (int i=0;i<newMutations.size();i++)
+            qDebug()<<"   Mut "<<newMutations[i];
+    }
     for(unsigned int i=0; i<tmpMutationsPerRepFather; i++){
         totalNumberOfEvents++;
+        tmpCurGenNumberOfEvents++;
         //get a random basis position
         tmpMutatedPosition = getRandomInteger();
 
@@ -257,6 +272,16 @@ Cell *CellSystem::addNewCell(Cell *father){
     proliferationChild = std::min(proliferationChild,maxProliferation);
     deathChild = std::min(deathChild,maxDeath);
     //qDebug()<<"Creating Cell";
+    if (hapenningAsymmetricMitosis){
+        if (mitosisFirstCell){
+            proliferationChild *= asymmetricMitosisDivFactor*2;
+            deathChild *= asymmetricMitosisDeathFactor*2;
+        }else { //second cell
+            proliferationChild *= (1-asymmetricMitosisDivFactor)*2;
+            deathChild *= (1-asymmetricMitosisDeathFactor)*2;
+        }
+    }
+
     Cell *newCell = new Cell(counterCellId,proliferationChild, deathChild, tmpMutationsPerRepChild,
                                  telomeresChild, newMutations,newMutationEvents, newFirstTapeMutationGenes, newSecondTapeMutationGenes,newFirstTapeMutationEvents, newSecondTapeMutationEvents, newParentsOrder);
     newCell->setAncestor(father->getAncestor());
@@ -304,6 +329,7 @@ long CellSystem::getRandomIntegerInRange(int max)
 bool CellSystem::process()
 {
 //    qDebug()<<"Start process";
+    tmpCurGenNumberOfEvents=0;
     for(unsigned int i=0; i< rulesMutationManual.size(); i++) {
         if(generation == rulesMutationManual[i]->getGeneration()){
             processRuleOfManualMutations(i);
@@ -317,7 +343,7 @@ bool CellSystem::process()
         if(cellVec[i]->isAlive()){
 //            if(generation>520)
 //                qDebug()<<"b4 reproduce"<<i;
-            if(!cellVec[i]->reproduce())
+            if(!cellVec[i]->reproduce(asymmetricMitosisProb))
                 tmpCurrentDeathHistory++;
 //            if(generation>520)
 //                qDebug()<<"after reproduce"<<i;
@@ -330,6 +356,8 @@ bool CellSystem::process()
             freePositions.push(i);
         }
     }
+
+    gensNumberOfEvents.push_back(tmpCurGenNumberOfEvents);
 //    qDebug()<<"minorDebug";
     generation++;
     generationLastPositionCell = lastPositionCell;
@@ -491,15 +519,17 @@ int CellSystem::killAtRandom(int numberOfCellsToDie)
     return numberOfDead;
 }
 
-void CellSystem::loadMutationTableFile(QString filename)
+bool CellSystem::loadMutationTableFile(QString filename)
 {
-    myMutationTable->loadMutations(filename);
-    genome_size = myMutationTable->getGenomeSize();
+    bool success_load = myMutationTable->loadMutations(filename);
+    if (success_load)
+        genome_size = myMutationTable->getGenomeSize();
+    return success_load;
 }
 
-void CellSystem::loadSinergyTableFile(QString filename)
+bool CellSystem::loadSinergyTableFile(QString filename)
 {
-    myMutationTable->loadSinergyPairs(filename);
+    return myMutationTable->loadSinergyPairs(filename);
 }
 
 void CellSystem::loadDefaultValues(float tprobProl, float tprobDeath, int tTelomeres, int mutPerDiv)
@@ -521,6 +551,13 @@ void CellSystem::loadStopConditions(int tgenerations, int tCells, int tMutatedCe
     stopGenerations = tgenerations;
     stopNumberOfCells = tCells;
     stopMutatedCells = tMutatedCells;
+}
+
+void CellSystem::loadAsymmetricMitosisInfo(float tprob, float divFactor, float deathFactor)
+{
+    asymmetricMitosisProb = tprob;
+    asymmetricMitosisDivFactor = divFactor;
+    asymmetricMitosisDeathFactor = deathFactor;
 }
 
 void CellSystem::addMutationRule(MutationManual *tMut)
@@ -580,6 +617,8 @@ void CellSystem::processRuleOfManualMutations(unsigned int id)
             continue;
         if(cellVec[i]->isAlive()){
             if(getRandomProb()*100<=currentMutationEvent->getPercentage()){ //should receive the mutation
+                tmpCurGenNumberOfEvents++;
+                totalNumberOfEvents++;
                 std::vector<unsigned int> tmpfirstTapeEvents = cellVec[i]->getFirstTapeMutationEvents();
                 std::vector<unsigned int> tmpsecondTapeEvents = cellVec[i]->getSecondTapeMutationEvents();
                 std::vector<unsigned int> newMutationGenes = cellVec[i]->getMutationsInOrder();
@@ -636,13 +675,14 @@ void CellSystem::exportInfo(QString tname)
     exportAncestralResults(tname+"_ancestralResults.csv");
 }
 
-void CellSystem::exportLastLine(QString tname)
+void CellSystem::exportLastLine(QString tname, bool outputSequenceEachCell)
 {
     exportMutationGeneCountersLastLine(tname+"_genesMutationResults.csv");
     exportMutationEventCountersLastLine(tname+"_eventsMutationResults.csv");
     //exportMutationHistogramsLastLine(tname+"_numberOfCellsWithNMutations.csv");
     exportAncestralResultsLastLine(tname+"_ancestralResults.csv");
-    exportMutsEachCellLastLine(tname+"_sequenceEachCell.csv");
+    if (outputSequenceEachCell)
+       exportMutsEachCellLastLine(tname+"_sequenceEachCell.csv");
 }
 
 void CellSystem::exportInputParams(QString tname)
@@ -720,6 +760,7 @@ void CellSystem::exportMutationEventCounters(QString tname)
         streamIntermediateResults<<mutationEventNames[i]<<+" ; ";
     }
     //streamIntermediateResults<<"Affected Cells ; ";
+    streamIntermediateResults<<"Number of Events ; ";
     streamIntermediateResults<<"Total Population ; \n";
     if(historyFirstTapeEventCounters.size()>0){
         for(unsigned int i=0;i<historyFirstTapeEventCounters.size();i++){
@@ -734,6 +775,7 @@ void CellSystem::exportMutationEventCounters(QString tname)
                 streamIntermediateResults<<QString::number(historyFirstTapeEventCounters[i].getNumberGivenMut(j) + historySecondTapeEventCounters[i].getNumberGivenMut(j)-historyMutationEventCounters[i].getNumberGivenMut(j))+" ; ";
             }
             //streamIntermediateResults<<QString::number(historyNumberOfAffectedCells[i])+" ; ";
+            streamIntermediateResults<<QString::number(gensNumberOfEvents[i])+" ; ";
             streamIntermediateResults<<QString::number(populationHistory[i])+" ; \n";
         }
     }
@@ -855,6 +897,7 @@ void CellSystem::exportMutationEventCountersLastLine(QString tname)
             streamIntermediateResults<<mutationEventNames[i]<<" ; ";
         }
         //streamIntermediateResults<<"Affected Cells ; ";
+        streamIntermediateResults<<"Total Number of Events ; ";
         streamIntermediateResults<<"Total Population ; \n";
     }
     streamIntermediateResults<<QString::number(seed)+" ; ";
@@ -869,6 +912,7 @@ void CellSystem::exportMutationEventCountersLastLine(QString tname)
         streamIntermediateResults<<QString::number(historyFirstTapeEventCounters.back().getNumberGivenMut(j) + historySecondTapeEventCounters.back().getNumberGivenMut(j) - historyMutationEventCounters.back().getNumberGivenMut(j))+" ; ";
     }
     //streamIntermediateResults<<QString::number(historyNumberOfAffectedCells.back())+" ; ";
+    streamIntermediateResults<<QString::number(totalNumberOfEvents)+" ; ";
     streamIntermediateResults<<QString::number(populationHistory.back())+" ; \n";
     exportintermediateResults.close();
 }
